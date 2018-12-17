@@ -1,171 +1,124 @@
-// basic MQTT PUB and SUB
+/*
+ Basic ESP8266 MQTT example
 
-#include <PubSubClient.h>
+ This sketch demonstrates the capabilities of the pubsub library in combination
+ with the ESP8266 board/library.
+
+ It connects to an MQTT server then:
+  - publishes "hello world" to the topic "outgoingTopic" every two seconds
+ It will reconnect to the server if the connection is lost using a blocking
+ reconnect function. See the 'mqtt_reconnect_nonblocking' example for how to
+ achieve the same result without blocking the main loop.
+
+ To install the ESP8266 board, (using Arduino 1.6.4+):
+  - Add the following 3rd party board manager under "File -> Preferences -> Additional Boards Manager URLs":
+       http://arduino.esp8266.com/stable/package_esp8266com_index.json
+  - Open the "Tools -> Board -> Board Manager" and click install for the ESP8266"
+  - Select your ESP8266 in "Tools -> Board"
+
+*/
+
 #include <ESP8266WiFi.h>
-#include <EEPROM.h>
+#include <PubSubClient.h>
 
-#define MQTT_SERVER "iot.eclipse.org"   // Server
-#define PORT 1883
-String id="AA10001001";   // ID
-String rfid="Default";
-char* outTopic = "pubArunn";  // publish topic
-char* inTopic="subArunn";
-char* user_name="rabbit";
-char* pass_word="rabbit";
-const char WiFiAPPSK[] = "dialog123"; //SSID of AP
+// Update these with values suitable for your network.
 
-void callback(char* topic, byte* payload, unsigned int length);
-void reconnect();
-int publishpress();
-String macToStr(const uint8_t* mac);
-String IpAddress2String(const IPAddress& ipAddress);
+const char* ssid = "YOURSSID";
+const char* password = "PASSWORD";
+const char* mqtt_server = "iot.eclipse.org";
 
+WiFiClient espClient;
+PubSubClient client(espClient);
+long lastMsg = 0;
+char msg[50];
+int value = 0;
 
+void setup_wifi() {
 
-static boolean isOn = false;
-static boolean isConnected = false;
-
-
-WiFiServer server(80);
-WiFiClient wifiClient;
-PubSubClient client(MQTT_SERVER, PORT, callback, wifiClient);
- 
-void setup() {
-  Serial.begin(9600);
-  EEPROM.begin(512);
-  char sent1[50];
-  connectWifi();
-  Serial.println("STart publish");
-  reconnect();
-
-  String sent="Rain"; 
-  sent.toCharArray(sent1,50);
-  int status1= client.publish(outTopic, sent1);
-  Serial.println(status1);
-    delay(500);
- if (status1==0)
-    {
-      status1= client.publish(outTopic, sent1);
-      
-      }
-  
-  Serial.println(status1);
-  Serial.print("MTQQ Finished\n");
-  
-}
-
-
-
-void loop(){
- // client.loop();
-}
-  
-//MQTT callback
-void callback(char* topic, byte* payload, unsigned int length) {
-	String topicStr = topic; 
-	Serial.println("Callback update.");
-
- String msg=(char*)payload;
-	Serial.print("Topic: ");
-	Serial.println(msg);
-}
-
-void setupWiFi()
-{
-  WiFi.mode(WIFI_AP);
-  uint8_t mac[WL_MAC_ADDR_LENGTH];
-  WiFi.softAPmacAddress(mac);
-  String macID = String(mac[WL_MAC_ADDR_LENGTH - 2], HEX) + String(mac[WL_MAC_ADDR_LENGTH - 1], HEX);
-  macID.toUpperCase();
-  String AP_NameString = "Smart Button";
-  char AP_NameChar[AP_NameString.length() + 1];
-  memset(AP_NameChar, 0, AP_NameString.length() + 1);
- 
-  for (int i=0; i<AP_NameString.length(); i++)
-  AP_NameChar[i] = AP_NameString.charAt(i);
-  WiFi.softAP(AP_NameChar);
-}
-
-int publishpress(){
-}
-
-void AP_Mode(){
-        Serial.println("\nAP Mode Activated");
-       // ENDWHILE=true;
-        setupWiFi();
-        server.begin();
-  }
-
-void reconnect() {
-	 int wait=0;
-	if(WiFi.status() == WL_CONNECTED){
-		while (!client.connected()) {
-      wait++;
-     
-			Serial.print("Attempting MQTT connection...\n");
-			String clientName;
-			clientName += "esp8266-";
-			uint8_t mac[6];
-			WiFi.macAddress(mac);
-			clientName += macToStr(mac);
-			if (client.connect((char*) clientName.c_str())) {
-				
-        isConnected=true;
-		  	client.subscribe(inTopic);
-       Serial.print("MTQQ Connected\n");
-			}
-			else{Serial.println("Failed.\n"); /*abort();*/ isConnected=false;}
-		}
-	}
-}
-
-
-void connectWifi() //with default passsword
-{
- 
-  Serial.print("Wifi search started");
- 
-
-  Serial.println();
+  delay(10);
+  // We start by connecting to a WiFi network
   Serial.println();
   Serial.print("Connecting to ");
+  Serial.println(ssid);
 
-  WiFi.persistent(false);
-  WiFi.mode(WIFI_OFF);   // this is a temporary line, to be removed after SDK update to 1.5.4  -- to solve connection miss issue >> Arunn
-  WiFi.mode(WIFI_STA);
-  //WiFi.begin(ssid, password);
+  WiFi.begin(ssid, password);
 
-  WiFi.begin("Jungle Book", "17242QkWj");
-    WiFi.config(IPAddress(192, 168, 10, 108), IPAddress(192, 168, 10, 1), IPAddress(255, 255, 255, 0)); //Static 
-  
-  int wait=0;
   while (WiFi.status() != WL_CONNECTED) {
-    wait++;
+    delay(500);
     Serial.print(".");
-    delay(100);
-   
-  } 
-  
+  }
+
+  randomSeed(micros());
+
   Serial.println("");
   Serial.println("WiFi connected");
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
-  Serial.println("done");
-  
-  
 }
 
-String macToStr(const uint8_t* mac){
-  String result;
-  for (int i = 0; i < 6; ++i) {
-    result += String(mac[i], 16);
-    if (i < 5){
-      result += ':';
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+
+  // Switch on the LED if an 1 was received as first character
+  if ((char)payload[0] == '1') {
+    digitalWrite(BUILTIN_LED, LOW);   // Turn the LED on (Note that LOW is the voltage level
+    // but actually the LED is on; this is because
+    // it is acive low on the ESP-01)
+  } else {
+    digitalWrite(BUILTIN_LED, HIGH);  // Turn the LED off by making the voltage HIGH
+  }
+
+}
+
+void reconnect() {
+  // Loop until we're reconnected
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Create a random client ID
+    String clientId = "ESP8266Client-";
+    clientId += String(random(0xffff), HEX);
+    // Attempt to connect
+    if (client.connect(clientId.c_str())) {
+      Serial.println("connected");
+      // Once connected, publish an announcement...
+      client.publish("outgoingTopic", "hello world");
+      // ... and resubscribe
+      client.subscribe("incommingTopic");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
     }
   }
-  return result;
 }
 
+void setup() {
+  pinMode(BUILTIN_LED, OUTPUT);     // Initialize the BUILTIN_LED pin as an output
+  Serial.begin(115200);
+  setup_wifi();
+  client.setServer(mqtt_server, 1883);
+  client.setCallback(callback);
+}
 
+void loop() {
 
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
+  int value=analogRead(A0);
+  snprintf (msg, 75, "A0 reading # %d", value);
+  Serial.print("Publish message: ");
+  Serial.println(msg);
+  client.publish("outgoingTopic", msg);
 
+  delay(5000);
+}
